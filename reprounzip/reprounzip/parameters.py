@@ -13,9 +13,8 @@ downloaded from the web (rpzsudo and busybox), and the name of Vagrant boxes
 and Docker images for various operating systems.
 """
 
-from __future__ import division, print_function, unicode_literals
 
-from distutils.version import LooseVersion
+from packaging.version import Version as LooseVersion
 import json
 import logging
 import os

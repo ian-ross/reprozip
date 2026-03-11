@@ -11,14 +11,13 @@ It dispatchs to plugins registered through importlib.metadata as entry point
 ``reprounzip.unpackers``.
 """
 
-from __future__ import division, print_function, unicode_literals
 
 if __name__ == '__main__':  # noqa
     from reprounzip.main import main
     main()
 
 import argparse
-from importlib_metadata import entry_points
+from importlib.metadata import entry_points
 import locale
 import logging
 import sys
@@ -42,13 +41,14 @@ unpackers = {}
 
 
 def get_plugins(entry_point_name):
-    for entry_point in entry_points().select(group=entry_point_name):
+    for entry_point in entry_points(group=entry_point_name):
         try:
             func = entry_point.load()
         except Exception:
             print("Plugin %s from %s %s failed to initialize!" % (
                   entry_point.name,
-                  entry_point.dist.project_name, entry_point.dist.version),
+                  entry_point.dist.metadata['Name'],
+                  entry_point.dist.metadata['Version']),
                   file=sys.stderr)
             traceback.print_exc(file=sys.stderr)
             continue

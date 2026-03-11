@@ -10,7 +10,6 @@ setuptools. It is also callable directly.
 It dispatchs to other routines, or handles the testrun command.
 """
 
-from __future__ import division, print_function, unicode_literals
 
 if __name__ == '__main__':  # noqa
     from reprozip.main import main
@@ -20,9 +19,10 @@ import argparse
 import locale
 import logging
 import os
-from rpaths import Path
+from pathlib import Path
 import sqlite3
 import sys
+import tempfile
 import traceback
 
 from reprozip import __version__ as reprozip_version
@@ -33,7 +33,7 @@ from reprozip.common import setup_logging, \
 import reprozip.pack
 import reprozip.tracer.trace
 import reprozip.traceutils
-from reprozip.utils import PY3, unicode_, stderr
+from reprozip.utils import unicode_, stderr
 
 
 logger = logging.getLogger('reprozip')
@@ -63,11 +63,7 @@ def print_db(database):
     """Prints out database content.
     """
     assert database.is_file()
-    if PY3:
-        # On PY3, connect() only accepts unicode
-        conn = sqlite3.connect(str(database))
-    else:
-        conn = sqlite3.connect(database.path)
+    conn = sqlite3.connect(str(database))
     conn.row_factory = sqlite3.Row
     conn.text_factory = lambda x: unicode_(x, 'utf-8', 'replace')
 
@@ -159,8 +155,9 @@ def testrun(args):
 
     Not really useful, except for debugging.
     """
-    fd, database = Path.tempfile(prefix='reprozip_', suffix='.sqlite3')
+    fd, database_str = tempfile.mkstemp(prefix='reprozip_', suffix='.sqlite3')
     os.close(fd)
+    database = Path(database_str)
     try:
         if args.arg0 is not None:
             argv = [args.arg0] + args.cmdline[1:]
@@ -168,7 +165,7 @@ def testrun(args):
             argv = args.cmdline
         logger.debug("Starting tracer, binary=%r, argv=%r",
                      args.cmdline[0], argv)
-        c = _pytracer.execute(args.cmdline[0], argv, database.path)
+        c = _pytracer.execute(args.cmdline[0], argv, str(database))
         print("\n\n-----------------------------------------------------------"
               "--------------------")
         print_db(database)
@@ -181,7 +178,7 @@ def testrun(args):
 
         return c
     finally:
-        database.remove()
+        database.unlink()
 
 
 def trace(args):
@@ -232,9 +229,9 @@ def pack(args):
     Reads in the configuration file and writes out a tarball.
     """
     target = Path(args.target)
-    if not target.unicodename.lower().endswith('.rpz'):
-        target = Path(target.path + b'.rpz')
-        logger.warning("Changing output filename to %s", target.unicodename)
+    if not target.name.lower().endswith('.rpz'):
+        target = Path(str(target) + '.rpz')
+        logger.warning("Changing output filename to %s", target.name)
     reprozip.pack.pack(target, Path(args.dir), args.identify_packages)
 
 

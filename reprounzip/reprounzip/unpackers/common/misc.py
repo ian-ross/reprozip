@@ -5,7 +5,6 @@
 """Miscellaneous utilities for unpacker plugins.
 """
 
-from __future__ import division, print_function, unicode_literals
 
 import copy
 import functools
@@ -15,9 +14,11 @@ import os
 import pickle
 import random
 import re
+import shutil
+import tempfile
 import warnings
 
-from rpaths import PosixPath, Path
+from pathlib import PurePosixPath, Path
 import signal
 import subprocess
 import sys
@@ -26,7 +27,7 @@ import tarfile
 import reprounzip.common
 from reprounzip.common import RPZPack
 from reprounzip.parameters import get_parameter
-from reprounzip.utils import PY3, irange, iteritems, itervalues, \
+from reprounzip.utils import irange, iteritems, itervalues, \
     stdout_bytes, unicode_, join_root, copyfile
 
 
@@ -195,13 +196,14 @@ class FileUploader(object):
                 if not local_path:
                     # Restore original file from pack
                     logger.debug("Restoring input file %s", input_path)
-                    fd, temp = Path.tempfile(prefix='reprozip_input_')
+                    fd, temp_str = tempfile.mkstemp(prefix='reprozip_input_')
                     os.close(fd)
+                    temp = Path(temp_str)
                     local_path = self.extract_original_input(input_name,
                                                              input_path,
                                                              temp)
                     if local_path is None:
-                        temp.remove()
+                        temp.unlink()
                         logger.warning("No original packed, can't restore "
                                        "input file %s", input_name)
                         continue
@@ -217,10 +219,10 @@ class FileUploader(object):
                 self.upload_file(local_path, input_path)
 
                 if temp is not None:
-                    temp.remove()
+                    temp.unlink()
                     self.input_files.pop(input_name, None)
                 else:
-                    self.input_files[input_name] = local_path.absolute().path
+                    self.input_files[input_name] = str(local_path.resolve())
         finally:
             self.finalize()
 
@@ -234,13 +236,13 @@ class FileUploader(object):
     def extract_original_input(self, input_name, input_path, temp):
         tar = tarfile.open(str(self.target / self.data_tgz), 'r:*')
         try:
-            member = tar.getmember(str(join_root(PosixPath('DATA'),
+            member = tar.getmember(str(join_root(PurePosixPath('DATA'),
                                                  input_path)))
         except KeyError:
             return None
         member = copy.copy(member)
-        member.name = str(temp.components[-1])
-        tar.extract(member, str(temp.parent))
+        member.name = temp.name
+        tar.extract(member, str(temp.parent), filter='data')
         tar.close()
         return temp
 
@@ -331,15 +333,16 @@ class FileDownloader(object):
 
     def download_and_print(self, remote_path):
         # Download to temporary file
-        fd, temp = Path.tempfile(prefix='reprozip_output_')
+        fd, temp_str = tempfile.mkstemp(prefix='reprozip_output_')
         os.close(fd)
+        temp = Path(temp_str)
         download_status = self.download(remote_path, temp)
         if download_status is not None and not download_status:
             return False
         # Output to stdout
         with temp.open('rb') as fp:
             copyfile(fp, stdout_bytes)
-        temp.remove()
+        temp.unlink()
         return True
 
     def download(self, remote_path, local_path):
@@ -439,41 +442,10 @@ def fixup_environment(environ, args):
     return environ
 
 
-if PY3:
-    def pty_spawn(*args, **kwargs):
-        import pty
+def pty_spawn(*args, **kwargs):
+    import pty
 
-        return pty.spawn(*args, **kwargs)
-else:
-    def pty_spawn(argv):
-        """Version of pty.spawn() for PY2, that returns the exit code.
-
-        This works around https://bugs.python.org/issue2489.
-        """
-        logger.info("Using builtin pty.spawn()")
-
-        import pty
-        import tty
-
-        if isinstance(argv, bytes):
-            argv = (argv,)
-        pid, master_fd = pty.fork()
-        if pid == pty.CHILD:
-            os.execlp(argv[0], *argv)
-        try:
-            mode = tty.tcgetattr(pty.STDIN_FILENO)
-            tty.setraw(pty.STDIN_FILENO)
-            restore = 1
-        except tty.error:    # This is the same as termios.error
-            restore = 0
-        try:
-            pty._copy(master_fd, pty._read, pty._read)
-        except (IOError, OSError):
-            if restore:
-                tty.tcsetattr(pty.STDIN_FILENO, tty.TCSAFLUSH, mode)
-
-        os.close(master_fd)
-        return os.waitpid(pid, 0)[1]
+    return pty.spawn(*args, **kwargs)
 
 
 def interruptible_call(cmd, **kwargs):

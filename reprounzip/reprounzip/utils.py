@@ -13,19 +13,17 @@ to this software (more utilities).
 
 """
 
-from __future__ import division, print_function, unicode_literals
 
-import codecs
 import contextlib
 from datetime import datetime
 import email.utils
 import itertools
-import locale
 import logging
 import operator
 import os
 import requests
-from rpaths import Path, PosixPath
+from pathlib import Path, PurePosixPath
+import shutil
 import stat
 import subprocess
 import sys
@@ -35,62 +33,19 @@ import time
 logger = logging.getLogger(__name__.split('.', 1)[0])
 
 
-class StreamWriter(object):
-    def __init__(self, stream):
-        writer = codecs.getwriter(locale.getpreferredencoding())
-        self._writer = writer(stream, 'replace')
-        self.buffer = stream
+izip = zip
+irange = range
+iteritems = lambda d: d.items()
+itervalues = lambda d: d.values()
+listvalues = lambda d: list(d.values())
 
-    def writelines(self, lines):
-        self.write(str('').join(lines))
+stdout_bytes = sys.stdout.buffer if sys.stdout is not None else None
+stderr_bytes = sys.stderr.buffer if sys.stderr is not None else None
+stdin_bytes = sys.stdin.buffer if sys.stdin is not None else None
+stdout, stderr = sys.stdout, sys.stderr
 
-    def write(self, obj):
-        if isinstance(obj, bytes):
-            self.buffer.write(obj)
-        else:
-            self._writer.write(obj)
-
-    def __getattr__(self, name,
-                    getattr=getattr):
-
-        """ Inherit all other methods from the underlying stream.
-        """
-        return getattr(self._writer, name)
-
-
-PY3 = sys.version_info[0] == 3
-
-
-if PY3:
-    izip = zip
-    irange = range
-    iteritems = lambda d: d.items()
-    itervalues = lambda d: d.values()
-    listvalues = lambda d: list(d.values())
-
-    stdout_bytes = sys.stdout.buffer if sys.stdout is not None else None
-    stderr_bytes = sys.stderr.buffer if sys.stderr is not None else None
-    stdin_bytes = sys.stdin.buffer if sys.stdin is not None else None
-    stdout, stderr = sys.stdout, sys.stderr
-else:
-    izip = itertools.izip
-    irange = xrange  # noqa: F821
-    iteritems = lambda d: d.iteritems()
-    itervalues = lambda d: d.itervalues()
-    listvalues = lambda d: d.values()
-
-    _writer = codecs.getwriter(locale.getpreferredencoding())
-    stdout_bytes, stderr_bytes = sys.stdout, sys.stderr
-    stdin_bytes = sys.stdin
-    stdout, stderr = StreamWriter(sys.stdout), StreamWriter(sys.stderr)
-
-
-if PY3:
-    int_types = int,
-    unicode_ = str
-else:
-    int_types = int, long  # noqa: F821
-    unicode_ = unicode  # noqa: F821
+int_types = int,
+unicode_ = str
 
 
 def flatten(n, iterable):
@@ -108,7 +63,7 @@ def flatten(n, iterable):
     >>> list(flatten(2, l))
     [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
     """
-    for _ in irange(n):
+    for _ in range(n):
         iterable = itertools.chain.from_iterable(iterable)
     return iterable
 
@@ -172,9 +127,9 @@ def optional_return_type(req_args, other_args):
 
         args1, args2 = args[:len(req_args)], args[len(req_args):]
         req = dict((i, v) for i, v in enumerate(args1))
-        other = dict(izip(other_args, args2))
+        other = dict(zip(other_args, args2))
 
-        for k, v in iteritems(kwargs):
+        for k, v in kwargs.items():
             if k in req_args_pos:
                 pos = req_args_pos[k]
                 if pos in req:
@@ -259,34 +214,25 @@ def hsize(nbytes):
 def normalize_path(path):
     """Normalize a path obtained from the database.
     """
-    # For some reason, os.path.normpath() keeps multiple leading slashes
-    # We don't want this since it has no meaning on Linux
-    path = PosixPath(path)
-    if path.path.startswith(path._sep + path._sep):
-        path = PosixPath(path.path[1:])
-    return path
+    path = str(path)
+    if path.startswith('//'):
+        path = path[1:]
+    return PurePosixPath(path)
 
 
 def find_all_links_recursive(filename, files):
     path = Path('/')
-    for c in filename.components[1:]:
-        # At this point, path is a canonical path, and all links in it have
-        # been resolved
-
-        # We add the next path component
+    for c in filename.parts[1:]:
         path = path / c
-
-        # That component is possibly a link
-        if path.is_link():
-            # Adds the link itself
+        if path.is_symlink():
             files.add(path)
-
-            target = path.read_link(absolute=True)
-            # Here, target might contain a number of symlinks
+            target_str = os.readlink(str(path))
+            if os.path.isabs(target_str):
+                target = Path(target_str)
+            else:
+                target = path.parent / target_str
             if target not in files:
-                # Recurse on this new path
                 find_all_links_recursive(target, files)
-            # Restores the invariant; realpath might resolve several links here
             path = path.resolve()
     return path
 
@@ -311,7 +257,7 @@ def find_all_links(filename, include_target=False):
     """
     files = set()
     filename = Path(filename)
-    assert filename.absolute()
+    assert filename.is_absolute()
     path = find_all_links_recursive(filename, files)
     files = list(files)
     if include_target:
@@ -322,9 +268,9 @@ def find_all_links(filename, include_target=False):
 def join_root(root, path):
     """Prepends `root` to the absolute path `path`.
     """
-    p_root, p_loc = path.split_root()
-    assert p_root == b'/'
-    return root / p_loc
+    path = PurePosixPath(str(path))
+    assert path.is_absolute()
+    return root / path.relative_to('/')
 
 
 @contextlib.contextmanager
@@ -352,7 +298,7 @@ def make_dir_writable(directory):
     try:
         # Add u+x to all directories up to the target
         path = Path('/')
-        for c in directory.components[1:-1]:
+        for c in list(directory.parts)[1:-1]:
             path = path / c
             sb = path.stat()
             if sb.st_uid == uid and not sb.st_mode & 0o100:
@@ -379,7 +325,7 @@ def rmtree_fixed(path):
     If a directory with -w or -x is encountered, it gets fixed and deletion
     continues.
     """
-    if path.is_link():
+    if path.is_symlink():
         raise OSError("Cannot call rmtree on a symbolic link")
 
     uid = os.getuid()
@@ -388,11 +334,11 @@ def rmtree_fixed(path):
     if st.st_uid == uid and st.st_mode & 0o700 != 0o700:
         path.chmod(st.st_mode | 0o700)
 
-    for entry in path.listdir():
+    for entry in path.iterdir():
         if stat.S_ISDIR(entry.lstat().st_mode):
             rmtree_fixed(entry)
         else:
-            entry.remove()
+            entry.unlink()
 
     path.rmdir()
 
@@ -423,20 +369,20 @@ def download_file(url, dest, cachename=None, ssl_verify=None):
     if cachename is None:
         if dest is None:
             raise ValueError("One of 'dest' or 'cachename' must be specified")
-        cachename = dest.components[-1]
+        cachename = dest.name
 
     headers = {}
 
     if 'XDG_CACHE_HOME' in os.environ:
         cache = Path(os.environ['XDG_CACHE_HOME'])
     else:
-        cache = Path('~/.cache').expand_user()
+        cache = Path('~/.cache').expanduser()
     cache = cache / 'reprozip' / cachename
     if cache.exists():
-        mtime = email.utils.formatdate(cache.mtime(), usegmt=True)
+        mtime = email.utils.formatdate(cache.stat().st_mtime, usegmt=True)
         headers['If-Modified-Since'] = mtime
 
-    cache.parent.mkdir(parents=True)
+    cache.parent.mkdir(parents=True, exist_ok=True)
 
     try:
         response = requests.get(url, headers=headers,
@@ -455,7 +401,7 @@ def download_file(url, dest, cachename=None, ssl_verify=None):
                 logger.warning("Download %s: error downloading %s: %s",
                                cachename, url, e)
             if dest is not None:
-                cache.copy(dest)
+                shutil.copy2(str(cache), str(dest))
                 return dest
             else:
                 return cache
@@ -470,14 +416,14 @@ def download_file(url, dest, cachename=None, ssl_verify=None):
         response.close()
     except Exception as e:  # pragma: no cover
         try:
-            cache.remove()
+            cache.unlink()
         except OSError:
             pass
         raise e
     logger.info("Downloaded %s successfully", cachename)
 
     if dest is not None:
-        cache.copy(dest)
+        shutil.copy2(str(cache), str(dest))
         return dest
     else:
         return cache
