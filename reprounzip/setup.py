@@ -55,6 +55,7 @@ setup(name='reprounzip',
       license='BSD-3-Clause',
       keywords=['reprozip', 'reprounzip', 'reproducibility', 'provenance',
                 'vida', 'nyu'],
+      python_requires='>=3.13',
       classifiers=[
           'Development Status :: 5 - Production/Stable',
           'Intended Audience :: Science/Research',
