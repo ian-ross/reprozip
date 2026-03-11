@@ -297,7 +297,6 @@ class RPZPack(object):
         self._extract_file('METADATA/trace.sqlite3', target)
 
     @contextlib.contextmanager
-    @contextlib.contextmanager
     def with_trace(self):
         """Context manager extracting the trace database to a temporary file.
         """
