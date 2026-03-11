@@ -13,7 +13,6 @@ Currently supported package managers:
 - rpm (CentOS, Fedora)
 """
 
-from __future__ import division, print_function, unicode_literals
 
 import distro
 import itertools

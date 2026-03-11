@@ -5,7 +5,6 @@
 """Miscellaneous utilities for unpacker plugins.
 """
 
-from __future__ import division, print_function, unicode_literals
 
 import copy
 import functools
