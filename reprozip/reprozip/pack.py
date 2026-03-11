@@ -13,10 +13,11 @@ and config YAML.
 import itertools
 import logging
 import os
-from rpaths import Path
+from pathlib import Path, PurePosixPath
 import string
 import sys
 import tarfile
+import tempfile
 import uuid
 
 from reprozip import __version__ as reprozip_version
@@ -39,8 +40,8 @@ def expand_patterns(patterns):
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug("Expanding pattern %r into %d paths",
                          pattern,
-                         len(list(Path('/').recursedir(pattern))))
-        for path in Path('/').recursedir(pattern):
+                         len(list(Path('/').rglob(pattern))))
+        for path in Path('/').rglob(pattern):
             if path.is_dir():
                 dirs.add(path)
             else:
@@ -50,7 +51,7 @@ def expand_patterns(patterns):
     non_empty_dirs = set([Path('/')])
     for p in files | dirs:
         path = Path('/')
-        for c in p.components[1:]:
+        for c in p.parts[1:]:
             path = path / c
             non_empty_dirs.add(path)
 
@@ -76,7 +77,7 @@ def canonicalize_config(packages, other_files, additional_patterns,
     return packages, other_files
 
 
-def data_path(filename, prefix=Path('DATA')):
+def data_path(filename, prefix=PurePosixPath('DATA')):
     """Computes the filename to store in the archive.
 
     Turns an absolute path containing '..' into a filename without '..', and
@@ -84,12 +85,12 @@ def data_path(filename, prefix=Path('DATA')):
 
     Example:
 
-    >>> data_path(PosixPath('/var/lib/../../../../tmp/test'))
-    PosixPath(b'DATA/tmp/test')
-    >>> data_path(PosixPath('/var/lib/../www/index.html'))
-    PosixPath(b'DATA/var/www/index.html')
+    >>> data_path(PurePosixPath('/var/lib/../../../../tmp/test'))
+    PurePosixPath('DATA/tmp/test')
+    >>> data_path(PurePosixPath('/var/lib/../www/index.html'))
+    PurePosixPath('DATA/var/www/index.html')
     """
-    return prefix / filename.split_root()[1]
+    return prefix / PurePosixPath(str(filename)).relative_to('/')
 
 
 class PackBuilder(object):
@@ -103,7 +104,7 @@ class PackBuilder(object):
         if filename in self.seen:
             return
         path = Path('/')
-        for c in filename.components[1:]:
+        for c in Path(str(filename)).parts[1:]:
             path = path / c
             if path in self.seen:
                 continue
@@ -156,8 +157,9 @@ def pack(target, directory, sort_packages):
     logger.info("Creating pack %s...", target)
     tar = tarfile.open(str(target), 'w:')
 
-    fd, tmp = Path.tempfile()
+    fd, tmp_str = tempfile.mkstemp()
     os.close(fd)
+    tmp = Path(tmp_str)
     try:
         datatar = PackBuilder(tmp)
         # Add the files from the packages
@@ -190,18 +192,19 @@ def pack(target, directory, sort_packages):
 
         tar.add(str(tmp), 'DATA.tar.gz')
     finally:
-        tmp.remove()
+        tmp.unlink(missing_ok=True)
 
     logger.info("Adding metadata...")
     # Stores pack version
-    fd, manifest = Path.tempfile(prefix='reprozip_', suffix='.txt')
+    fd, manifest_str = tempfile.mkstemp(prefix='reprozip_', suffix='.txt')
     os.close(fd)
+    manifest = Path(manifest_str)
     try:
         with manifest.open('wb') as fp:
             fp.write(b'REPROZIP VERSION 2\n')
         tar.add(str(manifest), 'METADATA/version')
     finally:
-        manifest.remove()
+        manifest.unlink(missing_ok=True)
 
     # Stores the original trace
     trace = directory / 'trace.sqlite3'
@@ -220,8 +223,9 @@ def pack(target, directory, sort_packages):
     pack_id = str(uuid.uuid4())
 
     # Stores canonical config
-    fd, can_configfile = Path.tempfile(suffix='.yml', prefix='rpz_config_')
+    fd, can_configfile_str = tempfile.mkstemp(suffix='.yml', prefix='rpz_config_')
     os.close(fd)
+    can_configfile = Path(can_configfile_str)
     try:
         save_config(can_configfile, runs, packages, other_files,
                     reprozip_version,
@@ -230,7 +234,7 @@ def pack(target, directory, sort_packages):
 
         tar.add(str(can_configfile), 'METADATA/config.yml')
     finally:
-        can_configfile.remove()
+        can_configfile.unlink(missing_ok=True)
 
     tar.close()
 

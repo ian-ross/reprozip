@@ -36,10 +36,8 @@ pytracer = Extension('reprozip._pytracer',
 with io.open('README.rst', encoding='utf-8') as fp:
     description = fp.read()
 req = [
-    'importlib-metadata',
+    'packaging',
     'PyYAML',
-    'rpaths>=0.8',
-    'usagestats>=0.3',
     'requests',
     'distro']
 setup(name='reprozip',
@@ -77,8 +75,8 @@ setup(name='reprozip',
           'Development Status :: 5 - Production/Stable',
           'Intended Audience :: Science/Research',
           'License :: OSI Approved :: BSD License',
-          'Programming Language :: Python :: 2.7',
           'Programming Language :: Python :: 3',
+          'Programming Language :: Python :: 3.13',
           'Operating System :: POSIX :: Linux',
           'Programming Language :: C',
           'Topic :: Scientific/Engineering',

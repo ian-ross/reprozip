@@ -11,11 +11,13 @@ process itself.
 
 import logging
 import os
-from rpaths import Path
+from pathlib import Path
+import shutil
 import sqlite3
+import tempfile
 
 from reprozip.tracer.trace import TracedFile
-from reprozip.utils import PY3, listvalues
+from reprozip.utils import listvalues
 
 
 logger = logging.getLogger('reprozip')
@@ -110,12 +112,9 @@ def combine_traces(traces, target):
     """
     # We are probably overwriting one of the traces we're reading, so write to
     # a temporary file first then move it
-    fd, output = Path.tempfile('.sqlite3', 'reprozip_combined_')
-    if PY3:
-        # On PY3, connect() only accepts unicode
-        conn = sqlite3.connect(str(output))
-    else:
-        conn = sqlite3.connect(output.path)
+    fd, output_str = tempfile.mkstemp('.sqlite3', 'reprozip_combined_')
+    output = Path(output_str)
+    conn = sqlite3.connect(str(output))
     os.close(fd)
     conn.row_factory = sqlite3.Row
 
@@ -255,6 +254,5 @@ def combine_traces(traces, target):
     conn.close()
 
     # Move database to final destination
-    if not target.exists():
-        target.mkdir()
-    output.move(target / 'trace.sqlite3')
+    target.mkdir(exist_ok=True)
+    shutil.move(str(output), str(target / 'trace.sqlite3'))

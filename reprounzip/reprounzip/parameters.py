@@ -14,7 +14,7 @@ and Docker images for various operating systems.
 """
 
 
-from distutils.version import LooseVersion
+from packaging.version import Version as LooseVersion
 import json
 import logging
 import os

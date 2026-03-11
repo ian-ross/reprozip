@@ -16,12 +16,12 @@ See http://www.graphviz.org/
 
 
 import argparse
-from distutils.version import LooseVersion
+from packaging.version import Version as LooseVersion
 import heapq
 import json
 import logging
 import re
-from rpaths import PosixPath, Path
+from pathlib import PurePosixPath, Path
 import sqlite3
 import sys
 
@@ -29,7 +29,7 @@ from reprounzip.common import FILE_READ, FILE_WRITE, FILE_WDIR, RPZPack, \
     load_config
 from reprounzip.orderedset import OrderedSet
 from reprounzip.unpackers.common import COMPAT_OK, COMPAT_NO
-from reprounzip.utils import PY3, izip, iteritems, itervalues, stderr, \
+from reprounzip.utils import izip, iteritems, itervalues, stderr, \
     unicode_, escape, normalize_path
 
 
@@ -163,7 +163,7 @@ class Process(object):
 
     def json(self, process_map):
         name = "%d" % self.pid
-        long_name = "%s (%d)" % (PosixPath(self.binary).components[-1]
+        long_name = "%s (%d)" % (PurePosixPath(self.binary).name
                                  if self.binary else "-",
                                  self.pid)
         description = "%s\n%d" % (self.binary, self.pid)
@@ -297,11 +297,7 @@ def read_events(database, all_forks, has_thread_flag):
     # all_forks is True (--all-forks).
 
     assert database.is_file()
-    if PY3:
-        # On PY3, connect() only accepts unicode
-        conn = sqlite3.connect(str(database))
-    else:
-        conn = sqlite3.connect(database.path)
+    conn = sqlite3.connect(str(database))
     conn.row_factory = sqlite3.Row
 
     # This is a bit weird. We need to iterate on all types of events at the
@@ -514,7 +510,7 @@ def generate(target, configfile, database, all_forks=False, graph_format='dot',
                 logger.debug("AGG %s -> %s", pathuni, prefix)
                 pathuni = prefix
                 break
-        return PosixPath(pathuni)
+        return PurePosixPath(pathuni)
 
     files_new = set()
     for fi in files:
@@ -558,11 +554,11 @@ def generate(target, configfile, database, all_forks=False, graph_format='dot',
 
     # Filter other files
     if level_other_files == LVL_OTHER_ALL and file_depth is not None:
-        other_files = set(PosixPath(*f.components[:file_depth + 1])
+        other_files = set(PurePosixPath(*f.parts[:file_depth + 2])
                           for f in other_files)
         edges = OrderedSet((prog,
                             f if f in package_map
-                            else PosixPath(*f.components[:file_depth + 1]),
+                            else PurePosixPath(*f.parts[:file_depth + 2]),
                             mode,
                             argv)
                            for prog, f, mode, argv in edges)
@@ -706,10 +702,7 @@ def graph_json(target, runs, packages, other_files, package_map, edges,
 
     json_other_files.sort()
 
-    if PY3:
-        fp = target.open('w', encoding='utf-8', newline='\n')
-    else:
-        fp = target.open('wb')
+    fp = target.open('w', encoding='utf-8', newline='\n')
     try:
         json.dump({'packages': sorted(json_packages,
                                       key=lambda p: p['name']),

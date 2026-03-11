@@ -17,7 +17,7 @@ Currently supported package managers:
 import distro
 import itertools
 import logging
-from rpaths import Path
+from pathlib import Path
 import subprocess
 import time
 
@@ -89,12 +89,12 @@ class PkgManager(object):
 
     def _filter(self, f):
         # Special files
-        if any(f.path.lies_under(c) for c in magic_dirs):
+        if any(f.path.is_relative_to(c) for c in magic_dirs):
             return True
 
         # If it's not in a system directory, no need to look for it
-        if (f.path.lies_under('/usr/local') or
-                not any(f.path.lies_under(c) for c in system_dirs)):
+        if (f.path.is_relative_to('/usr/local') or
+                not any(f.path.is_relative_to(c) for c in system_dirs)):
             self.unknown_files.add(f)
             return True
 
@@ -128,7 +128,7 @@ class DpkgManager(PkgManager):
                 break
 
             proc = subprocess.Popen(['dpkg-query', '-S'] +
-                                    [path.path for path in batch],
+                                    [str(path) for path in batch],
                                     stdout=subprocess.PIPE,
                                     stderr=subprocess.PIPE)
             out, err = proc.communicate()
@@ -213,7 +213,7 @@ class RpmManager(PkgManager):
     """Package identifier for rpm-based systems (Fedora, CentOS).
     """
     def _get_packages_for_file(self, filename):
-        p = subprocess.Popen(['rpm', '-qf', filename.path,
+        p = subprocess.Popen(['rpm', '-qf', str(filename),
                               '--qf', '%{NAME}'],
                              stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE)

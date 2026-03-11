@@ -13,14 +13,14 @@ See schema: https://git.io/provviewer-xsd
 
 import argparse
 import logging
-from distutils.version import LooseVersion
-from rpaths import Path
+from packaging.version import Version as LooseVersion
+from pathlib import Path
 import sqlite3
 import sys
 
 from reprounzip.common import FILE_WRITE, RPZPack, load_config
 from reprounzip.unpackers.common import COMPAT_OK, COMPAT_NO, shell_escape
-from reprounzip.utils import PY3, iteritems, stderr
+from reprounzip.utils import iteritems, stderr
 
 
 logger = logging.getLogger('reprounzip.provviewer')
@@ -49,11 +49,7 @@ def generate(target, configfile, database):
     has_thread_flag = config.format_version >= LooseVersion('0.7')
 
     assert database.is_file()
-    if PY3:
-        # On PY3, connect() only accepts unicode
-        conn = sqlite3.connect(str(database))
-    else:
-        conn = sqlite3.connect(database.path)
+    conn = sqlite3.connect(str(database))
     conn.row_factory = sqlite3.Row
 
     vertices = []
@@ -136,10 +132,10 @@ def generate(target, configfile, database):
                           'targetID': 'process%d' % r_id})
     cur.close()
 
-    file2package = dict((f.path.path, pkg)
+    file2package = dict((str(f.path), pkg)
                         for pkg in config.packages
                         for f in pkg.files)
-    inputs_outputs = dict((f.path.path, (bool(f.write_runs),
+    inputs_outputs = dict((str(f.path), (bool(f.write_runs),
                                          bool(f.read_runs)))
                           for n, f in iteritems(config.inputs_outputs))
 

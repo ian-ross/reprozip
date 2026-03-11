@@ -13,12 +13,13 @@ generation logic for the config YAML file.
 import contextlib
 import distro
 from collections import defaultdict
-from importlib_metadata import entry_points
+from importlib.metadata import entry_points
 from itertools import count
 import logging
 import os
 import platform
-from rpaths import Path
+from pathlib import Path
+import shutil
 import sqlite3
 import sys
 import warnings
@@ -29,7 +30,7 @@ from reprozip.common import File, InputOutputFile, load_config, save_config, \
     FILE_READ, FILE_WRITE, FILE_LINK, FILE_SOCKET
 from reprozip.tracer.linux_pkgs import magic_dirs, system_dirs, \
     identify_packages
-from reprozip.utils import PY3, izip, iteritems, itervalues, \
+from reprozip.utils import izip, iteritems, itervalues, \
     unicode_, flatten, UniqueNames, hsize, normalize_path, find_all_links
 
 
@@ -79,12 +80,16 @@ class TracedFile(File):
         path = Path(path)
         size = None
         if path.exists():
-            if path.is_link():
-                self.comment = "Link to %s" % path.read_link(absolute=True)
+            if path.is_symlink():
+                target_str = os.readlink(str(path))
+                if not os.path.isabs(target_str):
+                    target_str = os.path.normpath(
+                        os.path.join(os.path.dirname(str(path)), target_str))
+                self.comment = "Link to %s" % target_str
             elif path.is_dir():
                 self.comment = "Directory"
             else:
-                size = path.size()
+                size = path.stat().st_size
                 self.comment = hsize(size)
         self.what = None
         self.runs = defaultdict(lambda: None)
@@ -112,7 +117,7 @@ class TracedFile(File):
 
 
 def run_filter_plugins(files, input_files):
-    for entry_point in entry_points().select(group='reprozip.filters'):
+    for entry_point in entry_points(group='reprozip.filters'):
         func = entry_point.load()
         name = entry_point.name
 
@@ -141,7 +146,7 @@ def get_files(conn):
     # Adds dynamic linkers
     for libdir in (Path('/lib'), Path('/lib64')):
         if libdir.exists():
-            for linker in libdir.listdir('*ld-linux*'):
+            for linker in libdir.glob('*ld-linux*'):
                 for filename in find_all_links(linker, True):
                     if filename not in files:
                         f = TracedFile(filename)
@@ -226,7 +231,7 @@ def get_files(conn):
                # not fi.path.stat().st_mode & 0b111 and
                fi.path not in executed and
                # not in a system directory
-               not any(fi.path.lies_under(m)
+               not any(fi.path.is_relative_to(m)
                        for m in magic_dirs + system_dirs)]
               for r, lst in enumerate(access_files)]
 
@@ -238,7 +243,7 @@ def get_files(conn):
                 # WRITTEN
                 fi.runs[r] == TracedFile.WRITTEN and
                 # not in a system directory
-                not any(fi.path.lies_under(m)
+                not any(fi.path.is_relative_to(m)
                         for m in magic_dirs + system_dirs)]
                for r, lst in enumerate(access_files)]
 
@@ -254,7 +259,7 @@ def get_files(conn):
         fi
         for fi in itervalues(files)
         if fi.what == TracedFile.READ_THEN_WRITTEN and
-        not any(fi.path.lies_under(m) for m in magic_dirs)]
+        not any(fi.path.is_relative_to(m) for m in magic_dirs)]
     if read_then_written_files:
         with stderr_in_red():
             logger.warning(
@@ -277,7 +282,7 @@ def get_files(conn):
     files = set(
         fi
         for fi in itervalues(files)
-        if fi.what != TracedFile.WRITTEN and not any(fi.path.lies_under(m)
+        if fi.what != TracedFile.WRITTEN and not any(fi.path.is_relative_to(m)
                                                      for m in magic_dirs))
     return files, inputs, outputs
 
@@ -342,11 +347,11 @@ def trace(binary, argv, directory, append, verbosity='unset'):
     if not isinstance(directory, Path):
         directory = Path(directory)
     if isinstance(binary, Path):
-        binary = binary.path
+        binary = str(binary)
 
     cwd = Path.cwd()
-    if (any(cwd.lies_under(c) for c in magic_dirs + system_dirs) and
-            not cwd.lies_under('/usr/local')):
+    if (any(cwd.is_relative_to(c) for c in magic_dirs + system_dirs) and
+            not cwd.is_relative_to('/usr/local')):
         logger.warning(
             "You are running this experiment from a system directory! "
             "Autodetection of non-system files will probably not work as "
@@ -370,14 +375,14 @@ def trace(binary, argv, directory, append, verbosity='unset'):
             elif r in 'sS':
                 sys.exit(125)
             elif r in 'oOdD':  # keep accepting 'd' for delete
-                directory.rmtree()
+                shutil.rmtree(str(directory))
                 directory.mkdir()
             logger.warning(
                 "You can use --overwrite to replace the existing trace "
                 "(or --continue to append\nwithout prompt)")
         elif append is False:
             logger.info("Removing existing trace directory %s", directory)
-            directory.rmtree()
+            shutil.rmtree(str(directory))
             directory.mkdir(parents=True)
     else:
         if append is True:
@@ -388,7 +393,7 @@ def trace(binary, argv, directory, append, verbosity='unset'):
     database = directory / 'trace.sqlite3'
     logger.info("Running program")
     # Might raise _pytracer.Error
-    c = _pytracer.execute(binary, argv, database.path)
+    c = _pytracer.execute(binary, argv, str(database))
     if c != 0:
         if c & 0x0100:
             logger.warning("Program appears to have been terminated by "
@@ -407,11 +412,7 @@ def write_configuration(directory, sort_packages, find_inputs_outputs,
     database = directory / 'trace.sqlite3'
 
     assert database.is_file()
-    if PY3:
-        # On PY3, connect() only accepts unicode
-        conn = sqlite3.connect(str(database))
-    else:
-        conn = sqlite3.connect(database.path)
+    conn = sqlite3.connect(str(database))
     conn.row_factory = sqlite3.Row
 
     # Reads info from database
@@ -561,9 +562,9 @@ def compile_inputs_outputs(runs, inputs, outputs):
                 file_names[fi] = make_unique(
                     'arg%s' % '_'.join('%s' % s for s in parts))
             else:
-                file_names[fi] = make_unique('arg_%s' % fi.unicodename)
+                file_names[fi] = make_unique('arg_%s' % fi.name)
         else:
-            file_names[fi] = make_unique(fi.unicodename)
+            file_names[fi] = make_unique(fi.name)
 
     return dict((n, InputOutputFile(p, readers.get(p, []), writers.get(p, [])))
                 for p, n in iteritems(file_names))

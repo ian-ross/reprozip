@@ -8,7 +8,7 @@ import distro
 import json
 import logging
 import platform
-from rpaths import Path
+from pathlib import Path
 import sys
 
 from reprounzip.common import RPZPack, load_config as load_config_file
@@ -138,7 +138,7 @@ def get_package_info(pack, read_data=False):
 def _print_package_info(pack, info, verbosity=1):
     print("Pack file: %s" % pack)
     print("\n----- Pack information -----")
-    print("Compressed size: %s" % hsize(pack.size()))
+    print("Compressed size: %s" % hsize(pack.stat().st_size))
 
     info_pack = info.get('pack')
     if info_pack:
